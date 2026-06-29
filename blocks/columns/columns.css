@@ -31,3 +31,7 @@
     order: unset;
   }
 }
+
+.demo-eds {
+  background: red;
+}
