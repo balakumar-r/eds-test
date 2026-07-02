@@ -1,117 +1,170 @@
-# EDS Test — CSS build & publish workflow
+# EDS Test — Developer Quick Start & CSS build workflow
 
-This repository uses per-component SCSS files under `blocks/` and a Gulp-based build to compile each non-partial SCSS file into a corresponding CSS file next to the source SCSS (one .css per component). This README explains how to set up, build, watch, and publish compiled CSS for EDS consumption.
+AEM-based frontend with per-component SCSS in `blocks/`. This project compiles each non-partial SCSS file to a same-folder `.css` and supports a BrowserSync-powered watcher for instant CSS injection during development. It also includes a recommended publish flow that pushes compiled-only CSS to a `css-only` branch for the EDS deployment pipeline.
 
-## Goals
-- Keep SCSS as the source-of-truth in the repo (tracked by Git).
-- Produce compiled CSS files for EDS to consume.
-- Publish compiled-only CSS to a dedicated branch (`css-only`) so EDS can consume built assets without source files.
+---
+
+## Quick summary (short)
+- Source: SCSS files under `blocks/` (keep these tracked).
+- Build: `npm run build:css` → compiles `blocks/**/[^_]*.scss` → `.css` + `.css.map` next to sources.
+- Dev/watch: `npm run watch:css` → starts Gulp + BrowserSync (proxies your local AEM dev server) and injects CSS on save.
+- Publish: produce a `css-only` branch that contains only compiled CSS for EDS (script or CI).
+
+---
 
 ## Prerequisites
-- Node.js (recommended 16.x or 18.x) and npm installed
+- Node.js (recommended v16.x or v18.x)
+- npm (if using npm v7+ see notes below)
 - Git configured with push access to this repository
+- AEM local dev server (AEM CLI) for full integration (typical dev URL: http://localhost:3000)
 
-## Install (once per developer)
-From the repo root:
+---
 
-```bash
-npm install
-```
+## First-time setup (one-time per machine)
 
-This installs dev dependencies including Gulp and Sass used by the build tasks.
+1. Clone the repo:
+   git clone git@github.com:<owner>/eds-test.git
+   cd eds-test
 
-## Build (manual)
-To compile all component SCSS to CSS once:
+2. Install Node deps (if npm gives ERESOLVE errors, use legacy peer-deps):
+   # Recommended (works with peer conflicts):
+   npm install --legacy-peer-deps
 
-```bash
-npm run build:css
-```
-
-This will compile every `blocks/**/[^_]*.scss` (i.e., all .scss files that do NOT start with `_`) and write the `.css` and `.css.map` files next to the source .scss.
-
-## Watch (development)
-To run a file watcher that recompiles when SCSS files change:
-
-```bash
-npm run watch:css
-```
-
-Leave the watcher terminal open while you work. It watches `blocks/**/*.scss` and runs the compile task on change. Editing partials (SCSS files starting with `_`) will also trigger a full recompile so consumers update.
-
-## How the Gulp tasks work (brief)
-- `blocks/**/[^_]*.scss` — compiles all non-partial component SCSS files
-- Output path is the same folder as the source SCSS (preserves directory structure)
-- Sourcemaps written next to each CSS file (`.css.map`)
-
-You can also run the underlying gulp task directly with npx:
-
-```bash
-npx gulp styles
-```
-
-## Publish compiled CSS for EDS (recommended workflow)
-We recommend keeping SCSS tracked in the primary branches (main / feature branches) and publishing only compiled CSS to a dedicated branch `css-only` that EDS consumes. This keeps source history and code review while providing a clean, CSS-only branch for the deployment system.
-
-Two ways to publish compiled CSS:
-
-1) Local script (run manually when you want to publish)
-
-Create `scripts/build-and-publish-css.sh` (or run the commands below manually). Example script (bash):
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-REPO_URL="$(git config --get remote.origin.url)"
-BRANCH=css-only
-TMP_DIR="$(mktemp -d)"
-
-# build
-npm ci
-npm run build:css
-
-# copy only .css files preserving dirs
-rsync -a --prune-empty-dirs --include '*/' --include '*.css' --exclude '*' blocks/ "$TMP_DIR/blocks/"
-
-cd "$TMP_DIR"
-
-git init
-git checkout -b "$BRANCH"
-git config user.name "github-actions"
-git config user.email "github-actions@github.com"
-
-git add .
-git commit -m "publish: compiled css from $(git rev-parse --short HEAD)"
-
-git remote add origin "$REPO_URL"
-# force push so the branch contains only compiled CSS
-git push --force origin "$BRANCH"
-```
+   # If you prefer to add only BrowserSync:
+   npm install --save-dev browser-sync --legacy-peer-deps
 
 Notes:
-- The script force-pushes the `css-only` branch. This is intentional so the branch contains only compiled assets and can be overwritten by future publishes.
-- You may use a PAT in the remote URL if you cannot push with your normal credentials.
+- Some linting packages in devDependencies may have peer conflicts with strict npm versions; using `--legacy-peer-deps` is the simplest workaround for dev setups.
 
-2) CI workflow (automated — recommended long-term)
+---
 
-A GitHub Actions workflow can run on merge to `main` (or manually) to build and push `css-only`. This is more reproducible and removes manual steps.
+## Build & Watch (development)
 
-If you want this automated, we can add `.github/workflows/publish-css.yml` which will run `npm ci`, `npm run build:css`, create an orphan `css-only` branch containing only the compiled CSS, and force-push it using the repo `GITHUB_TOKEN`.
+1. Build once (verify compilation works):
+   npm run build:css
 
-## Best practices for contributors
-- Keep SCSS files in the repository on your feature branch and open PRs as usual.
-- Use `npm run build:css` locally to verify compiled output when creating changes that affect styling.
-- When you want to publish compiled assets for EDS, run the publish script (or the CI will do it automatically if enabled).
-- Do NOT add `**/*.scss` to `.gitignore` — SCSS must remain tracked in the source branches.
+   - This compiles every `blocks/**/[^_]*.scss` to `.css` and `.css.map` files next to their source SCSS.
+
+2. Start your AEM dev server (if you need backend integration):
+   aem up
+   (confirm AEM serves at e.g. http://localhost:3000)
+
+3. Start the watcher + BrowserSync (in a separate terminal from AEM):
+   npm run watch:css
+
+   Behavior:
+   - BrowserSync proxies your AEM dev server (default: http://localhost:3000).
+   - On a compiled SCSS save (non-partial), CSS is recompiled and injected into the browser (no full reload).
+   - On partial (_*.scss) changes the build re-runs so components that import the partial get updated.
+   - On markup changes (HTML templates), BrowserSync triggers a full page reload.
+
+Environment variable (if AEM is on a different port):
+- Unix / macOS / Git Bash:
+  BS_PROXY=http://localhost:4502 npm run watch:css
+- Windows PowerShell:
+  $env:BS_PROXY='http://localhost:4502'; npm run watch:css
+
+Optional static fallback (if you don't run AEM):
+- You can serve a static folder (e.g., test pages) instead of proxying:
+  BS_STATIC_DIR=./test-pages npm run watch:css
+  (this requires the gulpfile to support static fallback — see Troubleshooting / Fallback)
+
+---
+
+## Commands reference
+
+- Install dependencies:
+  npm install --legacy-peer-deps
+
+- Build CSS once:
+  npm run build:css
+
+- Start watcher + live reload (BrowserSync):
+  npm run watch:css
+
+- Run the Gulp styles task directly (no npm script):
+  npx gulp styles
+
+---
+
+## How the build works (brief)
+- Gulp task compiles `blocks/**/[^_]*.scss` — that means files whose basename does NOT start with `_`.
+- Partials (files beginning with `_`) are not compiled into their own CSS files; they are intended to be imported by component SCSS files.
+- Output preserves the folder structure: `blocks/button/button.scss` -> `blocks/button/button.css` and `blocks/button/button.css.map`.
+- BrowserSync injects only CSS changes; for other changes it reloads the page.
+
+---
 
 ## Troubleshooting
-- Error: "Local modules not found" → run `npm install` from the repo root.
-- If `gulp` command fails, use the npm scripts (`npm run build:css` / `npm run watch:css`) or `npx gulp styles` so the locally-installed gulp binary is used.
-- Node version issues — use Node 16.x or 18.x. Check with `node -v`.
 
-## Questions or changes
-If you'd like, I can:
-- Add the publish script under `scripts/` and commit it, or
-- Add the GitHub Actions workflow to automate publishing to `css-only`, or
-- Add autoprefixer/minification to the build pipeline for a production output.
+1. Error: Cannot find module 'browser-sync'
+   - Install deps (ensure `node_modules` exists):
+     npm install --legacy-peer-deps
+   - Or install BrowserSync only:
+     npm install --save-dev browser-sync --legacy-peer-deps
 
-Pick one and I will implement it in a branch and open a PR if you prefer review before merge.
+2. npm ERESOLVE (peer-dependency errors)
+   - Use legacy peer deps:
+     npm install --legacy-peer-deps
+   - Or use yarn: remove package-lock.json and run `yarn install` (alternative).
+
+3. BrowserSync shows a blank/never-loading page
+   - The watcher proxies your AEM URL. Ensure AEM is running and reachable:
+     # PowerShell
+     Invoke-WebRequest -Uri http://localhost:3000 -Method Head
+     # Or test TCP
+     Test-NetConnection -ComputerName localhost -Port 3000
+   - If AEM is not running, start it: `aem up`.
+   - If AEM runs on another port, start the watcher with BS_PROXY set (see above).
+
+4. Changes saved but CSS not updating
+   - Confirm watcher is running (keep the terminal open).
+   - Confirm the file saved is:
+     - a non-partial component scss → compiled directly, or
+     - a partial that is imported by a compiled scss (otherwise it won't affect any output).
+   - If your editor uses atomic saves, file-change events may not trigger — enable polling if needed (ask to enable polling in gulpfile).
+
+5. If you need logs when files change
+   - We can update the gulpfile to log filenames on change and show exactly which files are rebuilt.
+
+---
+
+## Publish compiled-only CSS for EDS (recommended flow)
+
+We recommend:
+- Keep SCSS tracked in your main branches (dev/feature/main) for code review.
+- Publish compiled assets only to a dedicated `css-only` branch that EDS consumes.
+
+Two ways to produce `css-only`:
+
+A) Local publish script (manual)
+- Example flow (script: `scripts/build-and-publish-css.sh`):
+  - Build: npm ci && npm run build:css
+  - Copy only `.css` files into a temp dir preserving folders (rsync)
+  - Init a Git repo in temp dir, commit, and force-push to `css-only`
+
+B) CI workflow (automated)
+- Add a GitHub Actions workflow (`.github/workflows/publish-css.yml`) that runs on merge to `main` or `workflow_dispatch`, builds CSS, creates an orphan `css-only` branch containing only compiled CSS and force-pushes it using `GITHUB_TOKEN` (or a PAT).
+
+Notes:
+- The `css-only` branch is intentionally force-pushed during publishing so it contains only compiled assets.
+- If branch protection blocks force pushes to `css-only`, either relax it for the CI user or provide a PAT secret for the action.
+
+---
+
+## Best practices for contributors
+- Keep SCSS files in feature branches for review.
+- Run `npm run build:css` locally to verify compiled output before opening PRs.
+- Use `npm run watch:css` for live development; save often to see instant CSS injection.
+- Do not add `**/*.scss` to `.gitignore` — SCSS must remain tracked in the source branches.
+
+---
+
+## Want me to update the repo for you?
+I can:
+- Commit this README update directly to the repository, or open a PR with the change.
+- Add the local publish script under `scripts/` and commit it.
+- Add the GitHub Actions workflow to automate publishing to `css-only`.
+- Add polling / extra logging to the gulpfile if your editor/OS needs it.
+
+If you want me to commit the README now, reply: "Commit README to repo" and specify whether to push to `main` or create a branch and PR.
